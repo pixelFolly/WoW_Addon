@@ -1,0 +1,18 @@
+{
+ "_comment": "Zones ZoneGuide scores for Alliance players. areaId = AreaTable id used by QuestieDB, map = uiMapID, cont = EK (Eastern Kingdoms) or K (Kalimdor). Riverglades, Shen'dralas and Mount Hyjal are Forever zones. Which zone wins is decided in game from the XP still left for that character.",
+ "zones": [
+  ["Elwynn Forest", 12, 1429, "EK"], ["Dun Morogh", 1, 1426, "EK"], ["Teldrassil", 141, 1438, "K"],
+  ["Westfall", 40, 1436, "EK"], ["Loch Modan", 38, 1432, "EK"], ["Darkshore", 148, 1439, "K"],
+  ["Redridge Mountains", 44, 1433, "EK"], ["Wetlands", 11, 1437, "EK"], ["Ashenvale", 331, 1440, "K"],
+  ["Duskwood", 10, 1431, "EK"], ["Stonetalon Mountains", 406, 1442, "K"], ["Hillsbrad Foothills", 267, 1424, "EK"],
+  ["Stranglethorn Vale", 33, 1434, "EK"], ["Riverglades", 16591, 2548, "EK"], ["Arathi Highlands", 45, 1417, "EK"],
+  ["Desolace", 405, 1443, "K"], ["Shen'dralas", 16651, 2652, "K"], ["Thousand Needles", 400, 1441, "K"],
+  ["Alterac Mountains", 36, 1416, "EK"], ["Dustwallow Marsh", 15, 1445, "K"], ["Badlands", 3, 1418, "EK"],
+  ["Swamp of Sorrows", 8, 1435, "EK"], ["Tanaris", 440, 1446, "K"], ["Feralas", 357, 1444, "K"],
+  ["The Hinterlands", 47, 1425, "EK"], ["Searing Gorge", 51, 1427, "EK"], ["Azshara", 16, 1447, "K"],
+  ["Blasted Lands", 4, 1419, "EK"], ["Un'Goro Crater", 490, 1449, "K"], ["Felwood", 361, 1448, "K"],
+  ["Burning Steppes", 46, 1428, "EK"], ["Winterspring", 618, 1452, "K"], ["Mount Hyjal", 616, 2482, "K"],
+  ["Western Plaguelands", 28, 1422, "EK"], ["Eastern Plaguelands", 139, 1423, "EK"], ["Silithus", 1377, 1451, "K"]
+ ],
+ "starterZones": ["Shadowglen", "Teldrassil", "Northshire", "Elwynn Forest", "Coldridge Valley", "Dun Morogh", "Zephras Isle"]
+}

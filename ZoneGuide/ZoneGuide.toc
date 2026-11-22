@@ -1,0 +1,12 @@
+## Interface: 16001, 11508
+## Title: ZoneGuide
+## Notes: Tells you the best zone to level in, when to move on, and which quests are worth doing (including locked ones worth unlocking). Alliance only for now.
+## Author: Tyler
+## Version: 0.6.0
+## SavedVariables: ZoneGuideDB
+
+Data_StartRoute.lua
+Data_Zones.lua
+Core.lua
+UI.lua
+Map.lua
