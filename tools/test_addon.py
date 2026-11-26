@@ -24,11 +24,20 @@ function UnitRace() return "x", P.race end
 function UnitFactionGroup() return P.faction end
 function GetRealZoneText() return "" end
 C_QuestLog = { IsQuestFlaggedCompleted = function(id) return completed[id] or false end,
-               IsOnQuest = function(id) return onquest[id] or false end }
+               IsOnQuest = function(id) return onquest[id] or false end,
+               RequestLoadQuestByID = function(id) REQUESTED[id] = true end }
 MAPCONT = {}
 C_Map = { GetBestMapForUnit = function() return P.map end,
           GetMapInfo = function(id) return { parentMapID = MAPCONT[id] or 0 } end }
-C_Timer = { After = function(_, fn) fn() end }
+-- Short timers run at once; longer ones wait for RunLater() (the addon retries quest data after 2s).
+LATER = {}
+C_Timer = { After = function(d, fn) if (d or 0) >= 1 then table.insert(LATER, fn) else fn() end end }
+function RunLater() local fns = LATER; LATER = {}; for _, fn in ipairs(fns) do fn() end end
+-- Quest rewards: made-up amounts. UNLOADED quests aren't in the game's cache until requested and loaded.
+UNLOADED, REQUESTED = {}, {}
+function HaveQuestData(id) return not UNLOADED[id] end
+function GetQuestLogRewardMoney(id) if UNLOADED[id] then return 0 end return 25 + (id % 9) * 75 end
+function GetBuildInfo() return "1.15.8", "60000", "Nov 1 2026", 11508 end
 SlashCmdList = {}
 GameTooltip = setmetatable({}, { __index = function() return function() end end })
 MAPLOG = {}
@@ -411,6 +420,46 @@ def checks(addon):
         print(f"   {zone} at {lvl}: did {len(done)} quests; quests left:verdict at the end -> {' '.join(trail[-5:])}; then go to {pl.best.name}")
         for qid in done:
             G.completed[qid] = None
+
+    print("-- quest gold next to the level estimate")
+    import re
+    plain = lambda t: re.sub(r"\|c[0-9a-fA-F]{8}|\|r", "", t or "")
+    get = lua.eval("""function(fn, name) for i = 1, 200 do local n, v = debug.getupvalue(fn, i)
+        if not n then return nil end if n == name then return v end end end""")
+    G.ZoneGuideDB.markAll = False
+    P.race, P["class"], P.level, P.map = "Human", "WARRIOR", 14, zmap["Westfall"]
+
+    def rows(note):
+        ns.Invalidate()
+        ns.Refresh()
+        zr, sub = get(ns.Refresh, "zoneRows"), get(ns.Refresh, "subText")
+        shown = [f"{plain(zr[i].name.__text)}: {zr[i].value.__text} {plain(zr[i].gold.__text)}"
+                 for i in range(1, len(zr) + 1) if zr[i].__shown is not False and zr[i].name.__text]
+        print(f"   {note}: " + " | ".join(shown))
+        print(f"      {plain(sub.__text)}")
+
+    rows("Human 14 in Westfall")
+    plan = plan_of(ns)[0]
+    w = plan.here
+    counted = [w.quests[i].q.id for i in range(1, len(w.quests) + 1)
+               if w.quests[i].worth and w.quests[i].worth > 0 and not w.quests[i].away]
+    # A fresh login where the game hasn't loaded three of those quests yet.
+    lua, G, ns = load(addon)
+    P = G.P
+    get = lua.eval("""function(fn, name) for i = 1, 200 do local n, v = debug.getupvalue(fn, i)
+        if not n then return nil end if n == name then return v end end end""")
+    G.ZoneGuideDB.markAll = False
+    P.race, P["class"], P.level, P.map = "Human", "WARRIOR", 14, zmap["Westfall"]
+    for qid in counted[:3]:
+        G.UNLOADED[qid] = True
+    rows("fresh login, three Westfall quests not loaded yet")
+    print(f"      asked the game for: {sorted(k for k in G.REQUESTED.keys())} (of {counted[:3]})")
+    for qid in counted[:3]:
+        G.UNLOADED[qid] = None
+        ev = G.__frames[1]
+        ev["__OnEvent"](ev, "QUEST_DATA_LOAD_RESULT", qid, True)
+    G.RunLater()
+    rows("after they load")
 
 
 if __name__ == "__main__":

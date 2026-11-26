@@ -205,6 +205,19 @@ local function reachable(quests)
     return math.max(0, after - (p.level + p.xp / p.xpMax)), n, lvl
 end
 
+-- Gold from turning in the first n of these quests (anything with an id): the copper known so far,
+-- and the quests whose gold the game hasn't loaded yet. nil when the game can't tell.
+local function goldOf(quests, n)
+    if not ns.QuestMoney then return nil end
+    local copper, missing = 0, {}
+    for i = 1, n do
+        local id = quests[i].id
+        local m = ns.QuestMoney(id)
+        if m then copper = copper + m else missing[#missing + 1] = id end
+    end
+    return copper, missing
+end
+
 local function anyDone(list)
     for _, id in ipairs(list) do
         if ns.IsCompleted(id) or ns.IsOnQuest(id) then return true end
@@ -459,7 +472,9 @@ local function routeEntry(s)
         end
     end
     if #list > 0 then
-        return { name = s.zone, value = xp / ns.player.xpMax, quests = list, route = true }
+        local money, moneyMissing = goldOf(list, #list)
+        return { name = s.zone, value = xp / ns.player.xpMax, quests = list, route = true,
+                 money = money, moneyMissing = moneyMissing }
     end
 end
 
@@ -553,7 +568,7 @@ local function scoreZone(z)
                 end
                 markStar(item)
                 if not item.away and (w > 0 or inLog) then
-                    counted[#counted + 1] = { from = from(q, inLog), xp = potential(q) }
+                    counted[#counted + 1] = { id = q.id, from = from(q, inLog), xp = potential(q) }
                 end
                 -- "Open" = in your log, or something you can pick up right now that still gives most of its XP.
                 if inLog or (w > 0 and item.blocker == nil and L - q.lvl <= 6) then open = open + 1 end
@@ -566,7 +581,7 @@ local function scoreZone(z)
                 -- Too far above you for now: it counts once the quests below it get you close enough.
                 local b = ns.Blocker(q, true)
                 if b == nil or (b == "needs an earlier quest" and not leavesZone(ns.ChainSteps(q), z.name, q.where)) then
-                    counted[#counted + 1] = { from = from(q), xp = q.xp or 0 }
+                    counted[#counted + 1] = { id = q.id, from = from(q), xp = q.xp or 0 }
                     if b == nil and from(q) == L + 1 then soon, soonN = soon + (q.xp or 0), soonN + 1 end
                 end
             end
@@ -580,8 +595,9 @@ local function scoreZone(z)
         if counted[i].from > nextAt + 1 then break end
         nextXP = nextXP + counted[i].xp
     end
+    local money, moneyMissing = goldOf(counted, left)
     return { name = z.name, map = z.map, cont = z.cont, value = value, left = left, reached = reached,
-             nextAt = nextAt, nextValue = nextXP / ns.player.xpMax,
+             nextAt = nextAt, nextValue = nextXP / ns.player.xpMax, money = money, moneyMissing = moneyMissing,
              quests = chainEnds(list), group = group, open = open, soon = soon / ns.player.xpMax, soonN = soonN }
 end
 
@@ -791,6 +807,52 @@ local function queueRefresh(delay)
     end)
 end
 
+-- Quest gold -----------------------------------------------------------------------------
+-- What a quest pays when you turn it in, in copper. The quest databases don't have it, but the
+-- game does once it has loaded the quest: the ones it hasn't are asked for, and count as missing
+-- until they arrive. Known amounts are kept between sessions, and dropped when the game is patched.
+local GetRewardMoney = GetQuestLogRewardMoney
+local moneyOf, asked, moneyDB = {}, {}, nil
+
+if GetRewardMoney then
+    function ns.QuestMoney(id)
+        local m = moneyOf[id] or (moneyDB and moneyDB[id])
+        if m then return m end
+        if not HaveQuestData then return GetRewardMoney(id) or 0 end  -- can't tell: take what it says
+        if not HaveQuestData(id) then return nil end
+        m = GetRewardMoney(id) or 0
+        moneyOf[id] = m
+        if moneyDB then moneyDB[id] = m end
+        return m
+    end
+
+    -- Ask the game for quests whose gold isn't known yet, a few at a time.
+    function ns.RequestMoney(ids)
+        local n = 0
+        for _, id in ipairs(ids or {}) do
+            if not asked[id] then
+                asked[id] = true
+                if C_QuestLog and C_QuestLog.RequestLoadQuestByID then
+                    C_QuestLog.RequestLoadQuestByID(id)
+                elseif C_QuestLog and C_QuestLog.GetQuestObjectives then
+                    C_QuestLog.GetQuestObjectives(id)
+                end
+                n = n + 1
+                if n >= 30 then break end
+            end
+        end
+        if n > 0 then queueRefresh(2) end  -- in case the game doesn't say when they've loaded
+    end
+end
+
+local function loadMoneyDB()
+    local build = GetBuildInfo and select(2, GetBuildInfo()) or ""
+    if ZoneGuideDB.moneyBuild ~= build or type(ZoneGuideDB.money) ~= "table" then
+        ZoneGuideDB.money, ZoneGuideDB.moneyBuild = {}, build
+    end
+    moneyDB = ZoneGuideDB.money
+end
+
 local wasAlmost
 local f = CreateFrame("Frame")
 for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_LEVEL_UP", "QUEST_TURNED_IN",
@@ -798,10 +860,15 @@ for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_LEVEL_UP",
                      "UPDATE_FACTION" }) do
     f:RegisterEvent(e)
 end
-f:SetScript("OnEvent", function(_, event, arg1)
+pcall(f.RegisterEvent, f, "QUEST_DATA_LOAD_RESULT")  -- not in every client
+f:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
         ZoneGuideDB = ZoneGuideDB or { shown = true }
+        loadMoneyDB()
         ns.CreateUI()
+    elseif event == "QUEST_DATA_LOAD_RESULT" then
+        if not asked[arg1] then return end
+        if arg2 == false then moneyOf[arg1] = 0 end  -- the game doesn't have this quest: count it as nothing
     elseif event == "QUEST_TURNED_IN" and arg1 then
         ns.turnedIn[arg1] = true
     elseif event == "UPDATE_FACTION" then

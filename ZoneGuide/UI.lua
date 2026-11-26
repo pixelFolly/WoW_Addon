@@ -285,15 +285,22 @@ end
 local function newZoneRow()
     local row = CreateFrame("Button", nil, frame)
     row:SetHeight(LINE_H + 2)
-    row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    row.name:SetPoint("LEFT")
-    row.name:SetJustifyH("LEFT")
     row.value = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.value:SetPoint("RIGHT")
     row.value:SetJustifyH("RIGHT")
+    -- Gold from the quests counted in the level estimate, just left of it.
+    row.gold = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.gold:SetPoint("RIGHT", -40, 0)
+    row.gold:SetWidth(58)
+    row.gold:SetJustifyH("RIGHT")
     row.bar = CreateFrame("StatusBar", nil, row)
-    row.bar:SetSize(80, 8)
-    row.bar:SetPoint("RIGHT", -44, 0)
+    row.bar:SetSize(60, 8)
+    row.bar:SetPoint("RIGHT", -102, 0)
+    row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    row.name:SetPoint("LEFT")
+    row.name:SetPoint("RIGHT", row.bar, "LEFT", -4, 0)
+    row.name:SetJustifyH("LEFT")
+    if row.name.SetWordWrap then row.name:SetWordWrap(false) end
     row.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
     row.bar:SetMinMaxValues(0, ns.BAR_FULL)
     row.bar.bg = row.bar:CreateTexture(nil, "BACKGROUND")
@@ -442,6 +449,27 @@ local function levels(v)
     return string.format("%.1f lv", v)
 end
 
+-- The gold from turning in a zone's counted quests, like "2g 40s". A "+" means the game hasn't
+-- loaded every quest's reward yet, so there's at least this much. "" when it isn't known at all.
+local function gold(e)
+    local copper, missing = e.money, e.moneyMissing and #e.moneyMissing or 0
+    if not copper or (copper == 0 and missing == 0) then return "" end
+    local g, s, c = math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100
+    local G, S, C = "|cffffd100%dg|r", "|cffc7c7cf%ds|r", "|cffeda55f%dc|r"
+    local text
+    if g >= 10 or (g > 0 and s == 0) then text = string.format(G, g)
+    elseif g > 0 then text = string.format(G .. " " .. S, g, s)
+    elseif s > 0 then text = string.format(S, s)
+    else text = string.format(C, c) end
+    return missing > 0 and (text .. "+") or text
+end
+
+-- ", worth 2g 40s" for the sentences under the verdict.
+local function worth(e)
+    local text = gold(e)
+    return text ~= "" and (", worth " .. text) or ""
+end
+
 -- The zones listed in the window (the best few, plus where you are) and the one whose quests are
 -- shown: the recommended zone, unless you clicked another.
 local function zonesFor(plan, route)
@@ -525,7 +553,7 @@ function ns.Refresh()
     local zones, selected, target = zonesFor(plan, route)
     verdictText:SetText(string.format(VERDICT[plan.verdict], target.name))
     if route then
-        local xpNote = target.value >= 0.05 and string.format(" (about %s of XP)", levels(target.value)) or ""
+        local xpNote = target.value >= 0.05 and string.format(" (about %s of XP%s)", levels(target.value), worth(target)) or ""
         subText:SetText(string.format("Level %d. %d route quests left here%s.", ns.player.level, #target.quests, xpNote))
     elseif plan.reason == "grind" then
         local here = plan.verdict == "grind"
@@ -539,22 +567,25 @@ function ns.Refresh()
     elseif plan.verdict == "stay" then
         local nextUp = ""
         if plan.best ~= plan.here then nextUp = string.format(" Then: %s.", plan.best.name) end
-        subText:SetText(string.format("Finish here first: about %s of quests left, %d to pick up now.%s",
-            levels(plan.here.value), plan.here.open, nextUp))
+        subText:SetText(string.format("Finish here first: about %s of quests left%s, %d to pick up now.%s",
+            levels(plan.here.value), worth(plan.here), plan.here.open, nextUp))
     elseif plan.verdict == "move" and plan.here.left < ns.MIN_OPEN_STAY and plan.here.left > 0 then
-        subText:SetText(string.format("%s only has %d quest%s left: not worth stopping for. %s has about %s.",
-            plan.here.name, plan.here.left, plan.here.left == 1 and "" or "s", plan.best.name, levels(plan.best.value)))
+        subText:SetText(string.format("%s only has %d quest%s left: not worth stopping for. %s has about %s%s.",
+            plan.here.name, plan.here.left, plan.here.left == 1 and "" or "s", plan.best.name, levels(plan.best.value),
+            worth(plan.best)))
     elseif plan.verdict == "move" then
-        subText:SetText(string.format("%s only has about %s left. %s has about %s.",
-            plan.here.name, levels(plan.here.value), plan.best.name, levels(plan.best.value)))
+        subText:SetText(string.format("%s only has about %s left. %s has about %s%s.",
+            plan.here.name, levels(plan.here.value), plan.best.name, levels(plan.best.value), worth(plan.best)))
     else
-        subText:SetText(string.format("Best zone for level %d: about %s of quests.", ns.player.level, levels(plan.best.value)))
+        subText:SetText(string.format("Best zone for level %d: about %s of quests%s.", ns.player.level,
+            levels(plan.best.value), worth(plan.best)))
     end
 
     updateMarkers(plan, selected, route)
 
     -- Zone rows: the best few, plus where you are if it isn't among them.
     local y = -14 - (verdictText:GetStringHeight() or 14) - (subText:GetStringHeight() or 12) - 8
+    local wanted = {}  -- quests whose gold the game hasn't loaded yet
     for i, e in ipairs(zones) do
         local r = zoneRows[i]
         r.zone = e.name
@@ -566,6 +597,8 @@ function ns.Refresh()
         local frac = math.min(e.value / ns.BAR_FULL, 1)
         r.bar:SetStatusBarColor(1 - frac, 0.4 + 0.6 * frac, 0.2)
         r.value:SetText(levels(e.value))
+        r.gold:SetText(gold(e))
+        for _, id in ipairs(e.moneyMissing or {}) do wanted[#wanted + 1] = id end
         r:ClearAllPoints()
         r:SetPoint("TOPLEFT", 10, y)
         r:SetPoint("RIGHT", frame, "RIGHT", -10, 0)
@@ -573,6 +606,7 @@ function ns.Refresh()
         y = y - LINE_H - 2
     end
     y = y - 6
+    if ns.RequestMoney and #wanted > 0 then ns.RequestMoney(wanted) end
 
     -- Scrolling quest list between the zone rows and the footer.
     buildDisplay(plan, selected, route)
