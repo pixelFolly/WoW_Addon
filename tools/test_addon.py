@@ -359,6 +359,34 @@ def checks(addon):
     human_only = [pl.here.quests[i].name for i in range(1, len(pl.here.quests) + 1) if pl.here.quests[i].races == 1]
     print("   Human-only quests on a dwarf's Elwynn route:", human_only or "none")
 
+    print("-- zone list: the 5 zones with the most quest XP, from both continents (* = across the sea)")
+    import re
+    plain = lambda t: re.sub(r"\|c[0-9a-fA-F]{8}|\|r", "", t or "")
+    get = lua.eval("""function(fn, name) for i = 1, 200 do local n, v = debug.getupvalue(fn, i)
+        if not n then return nil end if n == name then return v end end end""")
+    cont = {ns.zones[i].name: ns.zones[i].cont for i in range(1, len(ns.zones) + 1)}
+    every = [ns.zones[i].quests for i in range(1, len(ns.zones) + 1)] + [ns.dungeonQuests, ns.classQuests]
+    for race, cls, lvl, zone in [("Human", "WARRIOR", 22, "Elwynn Forest"), ("Human", "WARRIOR", 28, "Duskwood"),
+                                 ("NightElf", "DRUID", 31, "Wetlands"),
+                                 ("Dwarf", "HUNTER", 42, "Arathi Highlands"), ("Gnome", "MAGE", 56, "Western Plaguelands")]:
+        for src_ in every:  # the quests well below you are done
+            for j in range(1, len(src_) + 1):
+                G.completed[src_[j].id] = True if src_[j].lvl < lvl - 3 else None
+        pl = plan_for(race, cls, lvl, zone)
+        ns.Refresh()
+        listed = get(ns.Refresh, "zonesFor")(pl, False)[0]
+        names = [listed[i].name for i in range(1, len(listed) + 1)]
+        ranked = sorted((pl.ranked[i] for i in range(1, len(pl.ranked) + 1)), key=lambda e: -e.value)
+        top = [e.name for e in ranked[:5]]
+        shown = ", ".join(f"{listed[i].name}{'*' if cont[listed[i].name] != cont[zone] else ''} {listed[i].value:.1f}"
+                          for i in range(1, len(listed) + 1))
+        print(f"   {race} {lvl} in {zone}: {pl.verdict} -> {pl.best.name}. Listed: {shown}"
+              f"{'' if all(n in names for n in top) else '  MISSING ' + str([n for n in top if n not in names])}")
+        print(f"      {plain(get(ns.Refresh, 'subText').__text)}")
+    for src_ in every:
+        for j in range(1, len(src_) + 1):
+            G.completed[src_[j].id] = None
+
     print("-- map pins")
     got = {}
     real = ns.SetMarkers
@@ -446,8 +474,10 @@ def checks(addon):
         ns.Invalidate()
         ns.Refresh()
         zr, sub = get(ns.Refresh, "zoneRows"), get(ns.Refresh, "subText")
+        pl = ns.GetPlan()[0]
+        n = len(get(ns.Refresh, "zonesFor")(pl, pl.verdict == "start")[0])  # rows in use
         shown = [f"{plain(zr[i].name.__text)}: {zr[i].value.__text} {plain(zr[i].gold.__text)}"
-                 for i in range(1, len(zr) + 1) if zr[i].__shown is not False and zr[i].name.__text]
+                 for i in range(1, n + 1)]
         print(f"   {note}: " + " | ".join(shown))
         print(f"      {plain(sub.__text)}")
 

@@ -21,12 +21,13 @@ A free WoW addon for the Forever realms, Alliance only for now. It tells the pla
 - Don't decrypt or use RestedXP's paid guide content. The only data sources are:
   - RestedXP's free guides (CC BY-NC-SA 4.0), so the addon stays free and credits RestedXP.
   - QuestieDB and Questie (GPLv3).
-- The code is Lua 5.1. The Forever client has the modern APIs (C_Map, C_QuestLog, C_Reputation). The toc's `## Interface` is `16001, 11508`. Bump `## Version` for each release (currently 0.8.0).
+- The code is Lua 5.1. The Forever client has the modern APIs (C_Map, C_QuestLog, C_Reputation). The toc's `## Interface` is `16001, 11508`. Bump `## Version` for each release (currently 0.8.1).
 
 ## Tyler's preferences
 - Quests are sorted by level by default, with a Level/XP toggle. The window must stay resizable.
 - Finish a zone before moving on (`FINISH_ZONE = true`), with no ping-ponging between zones.
 - Don't say "stay" for a zone with only 1 or 2 quests left (`MIN_OPEN_STAY = 3`).
+- The zone list shows the 5 zones with the most quest XP from both continents, plus where you are and where you're sent. The advice still counts the boat trip (`TRAVEL_PENALTY = 0.3`): Tyler chose that over ignoring the continent, which in the sim more than doubled sea crossings for 0.1 to 0.3 levels less grinding. When a zone across the sea has more but loses on the trip, the verdict text says so.
 - The zone estimate only counts quests within 2 levels of you (`MAX_ABOVE = 2`); harder ones count once the zone's own quest XP would get you there.
 - No guessed numbers: kill XP is left out of every estimate because drop rates aren't in the data. Only add it back if it can be accurate.
 - A star marks a greyed-out quest that is worth unlocking.

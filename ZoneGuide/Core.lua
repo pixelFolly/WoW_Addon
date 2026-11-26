@@ -689,8 +689,10 @@ function ns.ClassQuests()
 end
 
 -- Returns { verdict = "start"|"stay"|"move"|"go"|"grind", reason = nil|"soon"|"grind", here = entry|nil,
--- best = entry, ranked = {...}, dungeons = {...}, classes = {...} } or nil plus a message. With reason
--- "grind", best is where to level up until its next quests open up (at best.nextAt).
+-- best = entry, ranked = {...}, passed = entry|nil, dungeons = {...}, classes = {...} } or nil plus a
+-- message. ranked holds the zones with quests for you, most quest XP first, wherever they are.
+-- passed is a zone with more quest XP than best that lost out only because it's on the other
+-- continent. With reason "grind", best is where to level up until its next quests open up (at best.nextAt).
 local function buildPlan()
     ns.UpdatePlayer()
     if ns.player.faction ~= "Alliance" then
@@ -720,17 +722,31 @@ local function buildPlan()
         all[#all + 1] = e
         if e.value > 0.05 then ranked[#ranked + 1] = e end
     end
-    table.sort(ranked, function(a, b) return a.adjusted > b.adjusted end)
+    -- The list shows the zones with the most quest XP for you, wherever they are. Where to go
+    -- next also counts the trip there.
+    table.sort(ranked, function(a, b) return a.value > b.value end)
+    local byTrip = {}
+    for i, e in ipairs(ranked) do byTrip[i] = e end
+    table.sort(byTrip, function(a, b) return a.adjusted > b.adjusted end)
     -- Only send you somewhere with enough quests to pick up right now; failing that, somewhere
     -- with at least one. A zone whose quests all need a higher level is no use yet.
-    local best
-    for _, need in ipairs({ ns.MIN_OPEN_BEST, 1 }) do
-        for _, e in ipairs(ranked) do
-            if e.open >= need then best = e break end
+    local best, need
+    for _, n in ipairs({ ns.MIN_OPEN_BEST, 1 }) do
+        for _, e in ipairs(byTrip) do
+            if e.open >= n then best, need = e, n break end
         end
         if best then break end
     end
-    best = best or ranked[1]
+    best = best or byTrip[1]
+    -- A zone with clearly more quest XP than that, just as open, can only have lost out on the boat trip.
+    local passed
+    for _, e in ipairs(ranked) do
+        if e == best then break end
+        if e ~= here and cont and e.cont ~= cont and e.open >= (need or 1) and e.value >= best.value + 0.1 then
+            passed = e
+            break
+        end
+    end
 
     -- Another zone is only worth the trip if it gives you more than the trip costs. When nowhere
     -- is and nothing's left here either, level up where the next quests open up soonest.
@@ -749,9 +765,6 @@ local function buildPlan()
         if not target then
             return nil, "No more solo quests found for level " .. ns.player.level .. "."
         end
-        local listed = false
-        for _, e in ipairs(ranked) do listed = listed or e == target end
-        if not listed then table.insert(ranked, 1, target) end
         return { verdict = target == here and "grind" or (here and "move" or "go"), reason = "grind",
                  here = here, best = target, ranked = ranked,
                  dungeons = ns.DungeonQuests(), classes = ns.ClassQuests() }
@@ -780,7 +793,7 @@ local function buildPlan()
         verdict = "move"
     end
     return { verdict = verdict, reason = reason, here = here, best = best, ranked = ranked,
-             dungeons = ns.DungeonQuests(), classes = ns.ClassQuests() }
+             passed = best ~= here and passed or nil, dungeons = ns.DungeonQuests(), classes = ns.ClassQuests() }
 end
 
 -- Scoring every zone takes a moment, so the plan is kept until something changes.

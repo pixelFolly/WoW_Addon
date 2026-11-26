@@ -435,7 +435,7 @@ function ns.CreateUI()
     subText:SetJustifyH("LEFT")
 
     zoneRows = {}
-    for i = 1, MAX_ZONES do zoneRows[i] = newZoneRow() end
+    for i = 1, MAX_ZONES + 2 do zoneRows[i] = newZoneRow() end  -- the top five, where you're sent and where you are
     rows = {}
 
     pinsButton = CreateFrame("Button", nil, frame)
@@ -511,19 +511,19 @@ local function worth(e)
     return text ~= "" and (", worth " .. text) or ""
 end
 
--- The zones listed in the window (the best few, plus where you are) and the one whose quests are
--- shown: the recommended zone, unless you clicked another.
+-- The zones listed in the window: the five with the most quest XP for you, wherever they are, plus
+-- the one you're sent to and the one you're in when they aren't among those, most quest XP first.
+-- And the one whose quests are shown: the recommended zone, unless you clicked another.
 local function zonesFor(plan, route)
     local target = (plan.verdict == "stay" or route) and plan.here or plan.best
-    local zones = {}
-    for i = 1, math.min(#plan.ranked, MAX_ZONES) do zones[#zones + 1] = plan.ranked[i] end
-    if plan.here and not route then
-        local found = false
-        for _, e in ipairs(zones) do if e == plan.here then found = true end end
-        if not found then
-            if #zones == MAX_ZONES then zones[MAX_ZONES] = plan.here else zones[#zones + 1] = plan.here end
-        end
+    local zones, listed = {}, {}
+    local function add(e)
+        if e and not listed[e] then listed[e], zones[#zones + 1] = true, e end
     end
+    for i = 1, math.min(#plan.ranked, MAX_ZONES) do add(plan.ranked[i]) end
+    add(plan.best)
+    if not route then add(plan.here) end
+    table.sort(zones, function(a, b) return a.value > b.value end)
     local selected = target
     for _, e in ipairs(zones) do if e.name == ns.picked then selected = e end end
     return zones, selected, target
@@ -593,6 +593,9 @@ function ns.Refresh()
 
     local zones, selected, target = zonesFor(plan, route)
     verdictText:SetText(string.format(VERDICT[plan.verdict], target.name))
+    -- A zone across the sea with more quest XP, but not enough more to be worth the boat trip.
+    local across = plan.passed and string.format(" %s has more, but not enough more to be worth the boat trip.",
+        plan.passed.name) or ""
     if route then
         local xpNote = target.value >= 0.05 and string.format(" (about %s of XP%s)", levels(target.value), worth(target)) or ""
         subText:SetText(string.format("Level %d. %d route quests left here%s.", ns.player.level, #target.quests, xpNote))
@@ -607,24 +610,24 @@ function ns.Refresh()
             ns.player.level + 1, levels(plan.here.soon), plan.best.name))
     elseif plan.verdict == "stay" then
         local nextUp = ""
-        if plan.best ~= plan.here then nextUp = string.format(" Then: %s.", plan.best.name) end
+        if plan.best ~= plan.here then nextUp = string.format(" Then: %s.%s", plan.best.name, across) end
         subText:SetText(string.format("Finish here first: about %s of quests left%s, %d to pick up now.%s",
             levels(plan.here.value), worth(plan.here), plan.here.open, nextUp))
     elseif plan.verdict == "move" and plan.here.left < ns.MIN_OPEN_STAY and plan.here.left > 0 then
-        subText:SetText(string.format("%s only has %d quest%s left: not worth stopping for. %s has about %s%s.",
+        subText:SetText(string.format("%s only has %d quest%s left: not worth stopping for. %s has about %s%s.%s",
             plan.here.name, plan.here.left, plan.here.left == 1 and "" or "s", plan.best.name, levels(plan.best.value),
-            worth(plan.best)))
+            worth(plan.best), across))
     elseif plan.verdict == "move" then
-        subText:SetText(string.format("%s only has about %s left. %s has about %s%s.",
-            plan.here.name, levels(plan.here.value), plan.best.name, levels(plan.best.value), worth(plan.best)))
+        subText:SetText(string.format("%s only has about %s left. %s has about %s%s.%s",
+            plan.here.name, levels(plan.here.value), plan.best.name, levels(plan.best.value), worth(plan.best), across))
     else
-        subText:SetText(string.format("Best zone for level %d: about %s of quests%s.", ns.player.level,
-            levels(plan.best.value), worth(plan.best)))
+        subText:SetText(string.format("Best zone for level %d: about %s of quests%s.%s", ns.player.level,
+            levels(plan.best.value), worth(plan.best), across))
     end
 
     updateMarkers(plan, selected, route)
 
-    -- Zone rows: the best few, plus where you are if it isn't among them.
+    -- Zone rows: the top five, plus where you're sent and where you are if they aren't among them.
     local y = -14 - (verdictText:GetStringHeight() or 14) - (subText:GetStringHeight() or 12) - 8
     local wanted = {}  -- quests whose gold or reward items the game hasn't loaded yet
     for i, e in ipairs(zones) do
