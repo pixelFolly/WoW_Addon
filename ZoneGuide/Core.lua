@@ -206,16 +206,18 @@ local function reachable(quests)
 end
 
 -- Gold from turning in the first n of these quests (anything with an id): the copper known so far,
--- and the quests whose gold the game hasn't loaded yet. nil when the game can't tell.
+-- the quests whose gold the game hasn't fully loaded yet, and how much of the copper comes from
+-- selling reward items. nil when the game can't tell.
 local function goldOf(quests, n)
     if not ns.QuestMoney then return nil end
-    local copper, missing = 0, {}
+    local copper, vendor, missing = 0, 0, {}
     for i = 1, n do
         local id = quests[i].id
-        local m = ns.QuestMoney(id)
-        if m then copper = copper + m else missing[#missing + 1] = id end
+        local m, partial, v = ns.QuestMoney(id)
+        if m then copper, vendor = copper + m, vendor + (v or 0) end
+        if not m or partial then missing[#missing + 1] = id end
     end
-    return copper, missing
+    return copper, missing, vendor
 end
 
 local function anyDone(list)
@@ -472,9 +474,9 @@ local function routeEntry(s)
         end
     end
     if #list > 0 then
-        local money, moneyMissing = goldOf(list, #list)
+        local money, moneyMissing, vendor = goldOf(list, #list)
         return { name = s.zone, value = xp / ns.player.xpMax, quests = list, route = true,
-                 money = money, moneyMissing = moneyMissing }
+                 money = money, moneyMissing = moneyMissing, vendor = vendor }
     end
 end
 
@@ -595,9 +597,10 @@ local function scoreZone(z)
         if counted[i].from > nextAt + 1 then break end
         nextXP = nextXP + counted[i].xp
     end
-    local money, moneyMissing = goldOf(counted, left)
+    local money, moneyMissing, vendor = goldOf(counted, left)
     return { name = z.name, map = z.map, cont = z.cont, value = value, left = left, reached = reached,
              nextAt = nextAt, nextValue = nextXP / ns.player.xpMax, money = money, moneyMissing = moneyMissing,
+             vendor = vendor,
              quests = chainEnds(list), group = group, open = open, soon = soon / ns.player.xpMax, soonN = soonN }
 end
 
@@ -808,38 +811,142 @@ local function queueRefresh(delay)
 end
 
 -- Quest gold -----------------------------------------------------------------------------
--- What a quest pays when you turn it in, in copper. The quest databases don't have it, but the
--- game does once it has loaded the quest: the ones it hasn't are asked for, and count as missing
--- until they arrive. Known amounts are kept between sessions, and dropped when the game is patched.
+-- What a quest is worth in copper when you turn it in: the money it pays, plus what its reward
+-- items sell for at a vendor. A quest gives you all of its "reward" items, so each of those counts
+-- (times its stack). Of its "choice" items you pick one, so only the one that sells for most counts.
+-- The quest databases have none of this, but the game does once it has loaded the quest and its
+-- items: the ones it hasn't are asked for, and count as missing until they arrive. Known amounts
+-- are kept between sessions, and dropped when the game is patched.
 local GetRewardMoney = GetQuestLogRewardMoney
-local moneyOf, asked, moneyDB = {}, {}, nil
+local ItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+local moneyOf, vendorOf, priceOf, asked, askedItem = {}, {}, {}, {}, {}
+local moneyDB, vendorDB
+
+local function haveQuest(id)
+    return not HaveQuestData or HaveQuestData(id)
+end
+
+-- What an item sells for (GetItemInfo's 11th value), or nil until the game has the item.
+local function sellPrice(itemID)
+    if priceOf[itemID] then return priceOf[itemID] end
+    if not ItemInfo then return 0 end
+    local name, _, _, _, _, _, _, _, _, _, price = ItemInfo(itemID)
+    if not name then return nil end
+    priceOf[itemID] = price or 0
+    return priceOf[itemID]
+end
+
+-- Calls fn(itemID, count) for each of a loaded quest's "reward" or "choice" items.
+local function eachItem(id, kind, fn)
+    local num = kind == "choice" and GetNumQuestLogChoices or GetNumQuestLogRewards
+    local info = kind == "choice" and GetQuestLogChoiceInfo or GetQuestLogRewardInfo
+    if not (num and info) then return end
+    for i = 1, num(id) or 0 do
+        local _, _, count, _, _, itemID = info(i, id)
+        if not itemID and GetQuestLogItemLink then
+            local link = GetQuestLogItemLink(kind, i, id)
+            itemID = link and tonumber(link:match("item:(%d+)"))
+        end
+        if itemID then fn(itemID, math.max(count or 1, 1)) end
+    end
+end
+
+-- What a loaded quest's items sell for: every item it gives you, plus the best-selling one of the
+-- items you pick from. Also which items those are, and the items whose price isn't known yet.
+local function vendorValue(id)
+    local r = { value = 0, given = {}, choices = 0, unknown = {} }
+    eachItem(id, "reward", function(itemID, count)
+        local p = sellPrice(itemID)
+        if not p then
+            r.unknown[#r.unknown + 1] = itemID
+        elseif p > 0 then
+            r.value = r.value + p * count
+            r.given[#r.given + 1] = { itemID, count }
+        end
+    end)
+    local best = 0
+    eachItem(id, "choice", function(itemID, count)
+        r.choices = r.choices + 1
+        local p = sellPrice(itemID)
+        if not p then
+            r.unknown[#r.unknown + 1] = itemID
+        elseif p * count > best then
+            best, r.pick = p * count, { itemID, count }
+        end
+    end)
+    r.value = r.value + best
+    return r
+end
 
 if GetRewardMoney then
+    -- A quest's gold in copper (nil until the game has loaded the quest), whether some of its items
+    -- haven't loaded yet (so it's at least that much), and how much of it comes from selling items.
     function ns.QuestMoney(id)
         local m = moneyOf[id] or (moneyDB and moneyDB[id])
-        if m then return m end
-        if not HaveQuestData then return GetRewardMoney(id) or 0 end  -- can't tell: take what it says
-        if not HaveQuestData(id) then return nil end
-        m = GetRewardMoney(id) or 0
-        moneyOf[id] = m
-        if moneyDB then moneyDB[id] = m end
-        return m
+        if not m then
+            if not haveQuest(id) then return nil end
+            m = GetRewardMoney(id) or 0
+            if HaveQuestData then  -- otherwise the game can't say whether it has the quest: don't keep it
+                moneyOf[id] = m
+                if moneyDB then moneyDB[id] = m end
+            end
+        end
+        local v = vendorOf[id] or (vendorDB and vendorDB[id])
+        if v then return m + v, false, v end
+        if not haveQuest(id) then return m, true, 0 end  -- its gold is remembered, its items aren't
+        local r = vendorValue(id)
+        if #r.unknown == 0 and HaveQuestData then
+            vendorOf[id] = r.value
+            if vendorDB then vendorDB[id] = r.value end
+        end
+        return m + r.value, #r.unknown > 0, r.value
     end
 
-    -- Ask the game for quests whose gold isn't known yet, a few at a time.
+    -- For a quest's tooltip: its money and the items counted, by name. nil until the game has it.
+    function ns.QuestReward(id)
+        local total, partial, v = ns.QuestMoney(id)
+        if not total then return nil end
+        local out = { money = total - v, vendor = v, partial = partial, given = {} }
+        if v > 0 and haveQuest(id) then
+            local r = vendorValue(id)
+            if #r.unknown == 0 then
+                local function name(e)
+                    local n = ItemInfo and ItemInfo(e[1]) or "?"
+                    return e[2] > 1 and (n .. " x" .. e[2]) or n
+                end
+                for _, e in ipairs(r.given) do out.given[#out.given + 1] = name(e) end
+                out.pick, out.choices = r.pick and name(r.pick), r.choices
+            end
+        end
+        return out
+    end
+
+    -- Ask the game for what isn't known yet, a few at a time: quests it hasn't loaded, and the
+    -- items of loaded quests whose price it doesn't have.
     function ns.RequestMoney(ids)
         local n = 0
         for _, id in ipairs(ids or {}) do
-            if not asked[id] then
-                asked[id] = true
-                if C_QuestLog and C_QuestLog.RequestLoadQuestByID then
-                    C_QuestLog.RequestLoadQuestByID(id)
-                elseif C_QuestLog and C_QuestLog.GetQuestObjectives then
-                    C_QuestLog.GetQuestObjectives(id)
+            if not haveQuest(id) then
+                if not asked[id] then
+                    asked[id] = true
+                    if C_QuestLog and C_QuestLog.RequestLoadQuestByID then
+                        C_QuestLog.RequestLoadQuestByID(id)
+                    elseif C_QuestLog and C_QuestLog.GetQuestObjectives then
+                        C_QuestLog.GetQuestObjectives(id)
+                    end
+                    n = n + 1
                 end
-                n = n + 1
-                if n >= 30 then break end
+            else
+                for _, itemID in ipairs(vendorValue(id).unknown) do
+                    if not askedItem[itemID] then
+                        askedItem[itemID] = true
+                        -- (Where this is missing, GetItemInfo has already asked the server for it.)
+                        if C_Item and C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
+                        n = n + 1
+                    end
+                end
             end
+            if n >= 30 then break end
         end
         if n > 0 then queueRefresh(2) end  -- in case the game doesn't say when they've loaded
     end
@@ -848,9 +955,10 @@ end
 local function loadMoneyDB()
     local build = GetBuildInfo and select(2, GetBuildInfo()) or ""
     if ZoneGuideDB.moneyBuild ~= build or type(ZoneGuideDB.money) ~= "table" then
-        ZoneGuideDB.money, ZoneGuideDB.moneyBuild = {}, build
+        ZoneGuideDB.money, ZoneGuideDB.vendor, ZoneGuideDB.moneyBuild = {}, {}, build
     end
-    moneyDB = ZoneGuideDB.money
+    if type(ZoneGuideDB.vendor) ~= "table" then ZoneGuideDB.vendor = {} end
+    moneyDB, vendorDB = ZoneGuideDB.money, ZoneGuideDB.vendor
 end
 
 local wasAlmost
@@ -860,7 +968,9 @@ for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_LEVEL_UP",
                      "UPDATE_FACTION" }) do
     f:RegisterEvent(e)
 end
-pcall(f.RegisterEvent, f, "QUEST_DATA_LOAD_RESULT")  -- not in every client
+for _, e in ipairs({ "QUEST_DATA_LOAD_RESULT", "ITEM_DATA_LOAD_RESULT", "GET_ITEM_INFO_RECEIVED" }) do
+    pcall(f.RegisterEvent, f, e)  -- not in every client
+end
 f:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
         ZoneGuideDB = ZoneGuideDB or { shown = true }
@@ -868,7 +978,11 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
         ns.CreateUI()
     elseif event == "QUEST_DATA_LOAD_RESULT" then
         if not asked[arg1] then return end
-        if arg2 == false then moneyOf[arg1] = 0 end  -- the game doesn't have this quest: count it as nothing
+        if arg2 == false then moneyOf[arg1], vendorOf[arg1] = 0, 0 end  -- the game doesn't have it: nothing
+    elseif event == "ITEM_DATA_LOAD_RESULT" or event == "GET_ITEM_INFO_RECEIVED" then
+        if askedItem[arg1] ~= true then return end  -- not ours, or already answered
+        askedItem[arg1] = "answered"
+        if arg2 == false then priceOf[arg1] = 0 end  -- the game doesn't have this item: it sells for nothing
     elseif event == "QUEST_TURNED_IN" and arg1 then
         ns.turnedIn[arg1] = true
     elseif event == "UPDATE_FACTION" then

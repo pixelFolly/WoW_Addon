@@ -37,6 +37,16 @@ local function sortMode()
     return ZoneGuideDB.sort == "xp" and "xp" or "level"
 end
 
+-- Copper as coins, like "2g 40s", "12g", "40s" or "35c".
+local function coins(copper)
+    local g, s, c = math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100
+    local G, S, C = "|cffffd100%dg|r", "|cffc7c7cf%ds|r", "|cffeda55f%dc|r"
+    if g >= 10 or (g > 0 and s == 0) then return string.format(G, g) end
+    if g > 0 then return string.format(G .. " " .. S, g, s) end
+    if s > 0 then return string.format(S, s) end
+    return string.format(C, c)
+end
+
 -- Text for one quest -------------------------------------------------------------------------
 
 local function location(q)
@@ -209,6 +219,25 @@ local function showTooltip(row)
     GameTooltip:AddLine(q.name, 1, 0.82, 0)
     GameTooltip:AddLine(string.format("Level %d (can start at %d)", q.lvl or 0, q.req or 0), 1, 1, 1)
     if q.xp then GameTooltip:AddLine(q.xp .. " XP", 0.6, 0.6, 1) end
+    local reward = ns.QuestReward and q.id and ns.QuestReward(q.id)
+    if reward and (reward.money + reward.vendor > 0 or reward.partial) then
+        local parts = {}
+        if reward.money > 0 or reward.vendor == 0 then parts[1] = coins(reward.money) end
+        if reward.vendor > 0 then
+            local items = {}
+            for _, name in ipairs(reward.given) do items[#items + 1] = name end
+            if reward.pick then
+                items[#items + 1] = reward.choices > 1
+                    and string.format("%s (the best of %d to pick from)", reward.pick, reward.choices) or reward.pick
+            end
+            local list = #items > 0 and table.concat(items, ", ", 1, #items - 1) .. (#items > 1 and " and " or "")
+                .. items[#items] or "its items"
+            parts[#parts + 1] = coins(reward.vendor) .. " for selling " .. list
+        end
+        local text = "Gold: " .. table.concat(parts, ", plus ")
+        if reward.partial then text = text .. " (some items haven't loaded yet)" end
+        GameTooltip:AddLine(text, 1, 1, 1, true)
+    end
     if q.giver and q.giver ~= "" then GameTooltip:AddLine("From: " .. q.giver, 1, 1, 1) end
     local loc = location(q)
     if loc ~= "" then GameTooltip:AddLine("Where: " .. loc, 1, 1, 1) end
@@ -311,6 +340,24 @@ local function newZoneRow()
         scroll = 0
         ns.Refresh()
     end)
+    row:SetScript("OnEnter", function(self)
+        local e = self.entry
+        if not (e and e.money) then return end
+        local vendor = e.vendor or 0
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:AddLine(e.name, 1, 0.82, 0)
+        GameTooltip:AddLine("From the quests in the level estimate:", 1, 1, 1)
+        GameTooltip:AddLine("Quest gold: " .. coins(e.money - vendor), 1, 1, 1)
+        GameTooltip:AddLine("Selling the reward items: " .. coins(vendor), 1, 1, 1)
+        GameTooltip:AddLine("Where a quest lets you pick one item, only the one that sells for most counts.",
+            0.6, 0.6, 0.6, true)
+        if e.moneyMissing and #e.moneyMissing > 0 then
+            GameTooltip:AddLine("Some rewards haven't loaded yet, so it's at least this much.", 0.6, 0.6, 0.6, true)
+        end
+        GameTooltip:AddLine("Click to see its quests.", 0.6, 0.6, 1)
+        GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", function() GameTooltip:Hide() end)
     return row
 end
 
@@ -449,19 +496,13 @@ local function levels(v)
     return string.format("%.1f lv", v)
 end
 
--- The gold from turning in a zone's counted quests, like "2g 40s". A "+" means the game hasn't
--- loaded every quest's reward yet, so there's at least this much. "" when it isn't known at all.
+-- The gold from turning in a zone's counted quests and selling their reward items, like "2g 40s".
+-- A "+" means the game hasn't loaded every reward yet, so there's at least this much. "" when it
+-- isn't known at all.
 local function gold(e)
     local copper, missing = e.money, e.moneyMissing and #e.moneyMissing or 0
     if not copper or (copper == 0 and missing == 0) then return "" end
-    local g, s, c = math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100
-    local G, S, C = "|cffffd100%dg|r", "|cffc7c7cf%ds|r", "|cffeda55f%dc|r"
-    local text
-    if g >= 10 or (g > 0 and s == 0) then text = string.format(G, g)
-    elseif g > 0 then text = string.format(G .. " " .. S, g, s)
-    elseif s > 0 then text = string.format(S, s)
-    else text = string.format(C, c) end
-    return missing > 0 and (text .. "+") or text
+    return missing > 0 and (coins(copper) .. "+") or coins(copper)
 end
 
 -- ", worth 2g 40s" for the sentences under the verdict.
@@ -585,10 +626,10 @@ function ns.Refresh()
 
     -- Zone rows: the best few, plus where you are if it isn't among them.
     local y = -14 - (verdictText:GetStringHeight() or 14) - (subText:GetStringHeight() or 12) - 8
-    local wanted = {}  -- quests whose gold the game hasn't loaded yet
+    local wanted = {}  -- quests whose gold or reward items the game hasn't loaded yet
     for i, e in ipairs(zones) do
         local r = zoneRows[i]
-        r.zone = e.name
+        r.zone, r.entry = e.name, e
         local label = e.name
         if e == plan.here then label = label .. " |cff999999(here)|r" end
         if e == selected then label = "|cffffffff> " .. label .. "|r" end

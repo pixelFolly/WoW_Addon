@@ -38,6 +38,19 @@ UNLOADED, REQUESTED = {}, {}
 function HaveQuestData(id) return not UNLOADED[id] end
 function GetQuestLogRewardMoney(id) if UNLOADED[id] then return 0 end return 25 + (id % 9) * 75 end
 function GetBuildInfo() return "1.15.8", "60000", "Nov 1 2026", 11508 end
+-- Reward items, made up too: every third quest lets you pick one of three items (the third a stack
+-- of 5), every fifth gives you two of one item. Items sell for (item id % 7) * 30 copper each.
+-- UNLOADED_ITEMS aren't in the game's cache until requested and loaded.
+UNLOADED_ITEMS, REQUESTED_ITEMS = {}, {}
+function GetNumQuestLogChoices(id) if UNLOADED[id] then return 0 end return id % 3 == 0 and 3 or 0 end
+function GetQuestLogChoiceInfo(i, id) local item = id * 10 + i; return "Item " .. item, 0, i == 3 and 5 or 1, 2, true, item end
+function GetNumQuestLogRewards(id) if UNLOADED[id] then return 0 end return id % 5 == 0 and 1 or 0 end
+function GetQuestLogRewardInfo(i, id) local item = id * 10 + 5; return "Item " .. item, 0, 2, 1, true, item end
+function GetItemInfo(item)
+  if UNLOADED_ITEMS[item] then return nil end
+  return "Item " .. item, "", 2, 10, 5, "Armor", "Mail", 1, "", 0, (item % 7) * 30
+end
+C_Item = { RequestLoadItemDataByID = function(item) REQUESTED_ITEMS[item] = true end }
 SlashCmdList = {}
 GameTooltip = setmetatable({}, { __index = function() return function() end end })
 MAPLOG = {}
@@ -458,6 +471,76 @@ def checks(addon):
         G.UNLOADED[qid] = None
         ev = G.__frames[1]
         ev["__OnEvent"](ev, "QUEST_DATA_LOAD_RESULT", qid, True)
+    G.RunLater()
+    rows("after they load")
+
+    print("-- selling reward items: every item a quest gives, but only the best one you pick from")
+    price = lambda item: (item % 7) * 30
+    def expect(qid):
+        money = 25 + (qid % 9) * 75
+        pick = max(price(qid * 10 + i) * (5 if i == 3 else 1) for i in (1, 2, 3)) if qid % 3 == 0 else 0
+        given = price(qid * 10 + 5) * 2 if qid % 5 == 0 else 0
+        return money, pick, given
+    here = plan_of(ns)[0].here
+    names = {here.quests[i].q.id: here.quests[i].q for i in range(1, len(here.quests) + 1)}
+    picks = []
+    for want in ("both", "pick", "given", "neither"):
+        ok = {"both": lambda q: q % 15 == 0, "pick": lambda q: q % 3 == 0 and q % 5,
+              "given": lambda q: q % 5 == 0 and q % 3, "neither": lambda q: q % 3 and q % 5}[want]
+        qid = next((q for q in counted if ok(q)), next(q for q in range(1, 100) if ok(q)))
+        picks.append(qid)
+        money, pick, given = expect(qid)
+        total, partial, vendor = ns.QuestMoney(qid)
+        print(f"   {want:7} quest {qid}: gold {money} + best pick {pick} + given {given} = {money + pick + given}c;"
+              f" addon says {total}c ({vendor}c from items){' MISMATCH' if total != money + pick + given else ''}")
+    tip = lua.eval("""function(q)
+      local lines = {}
+      GameTooltip.AddLine = function(_, text) lines[#lines + 1] = text end
+      for _, f in ipairs(__frames) do
+        local e = rawget(f, "entry")
+        if type(e) == "table" and e.kind == "quest" and f.__OnEnter then
+          f.entry = { kind = "quest", item = { q = q } }
+          f.__OnEnter(f)
+          f.entry = e
+          break
+        end
+      end
+      GameTooltip.AddLine = nil
+      return lines
+    end""")
+    ztip = lua.eval("""function()
+      local lines = {}
+      GameTooltip.AddLine = function(_, text) lines[#lines + 1] = text end
+      for _, f in ipairs(__frames) do
+        local e = rawget(f, "entry")
+        if type(e) == "table" and e.money and f.__OnEnter then f.__OnEnter(f); break end
+      end
+      GameTooltip.AddLine = nil
+      return lines
+    end""")
+    for qid in picks[:3]:
+        q = names.get(qid)
+        if q:
+            lines = [plain(x) for x in tip(q).values()]
+            print(f"   tooltip of {q.name}: " + next((x for x in lines if x.startswith("Gold")), "(no gold line)"))
+    print("   zone tooltip: " + " / ".join(plain(x) for x in ztip().values()))
+    # A fresh login where the game has the quests but not the items of one you pick from.
+    lua, G, ns = load(addon)
+    P = G.P
+    get = lua.eval("""function(fn, name) for i = 1, 200 do local n, v = debug.getupvalue(fn, i)
+        if not n then return nil end if n == name then return v end end end""")
+    G.ZoneGuideDB.markAll = False
+    P.race, P["class"], P.level, P.map = "Human", "WARRIOR", 14, zmap["Westfall"]
+    qid = next(q for q in counted if q % 3 == 0)
+    items = [qid * 10 + i for i in (1, 2, 3)]
+    for item in items:
+        G.UNLOADED_ITEMS[item] = True
+    rows(f"fresh login, the items of quest {qid} not loaded yet")
+    print(f"      asked the game for items: {sorted(k for k in G.REQUESTED_ITEMS.keys())} (of {items})")
+    for item in items:
+        G.UNLOADED_ITEMS[item] = None
+        ev = G.__frames[1]
+        ev["__OnEvent"](ev, "ITEM_DATA_LOAD_RESULT", item, True)
     G.RunLater()
     rows("after they load")
 

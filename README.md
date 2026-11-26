@@ -13,8 +13,9 @@ In game:
 - `/zg` shows or hides the window. `/zg reset` puts it back to its default size and position.
 - Drag the window to move it. Drag the bottom-right corner to resize it. Scroll with the mouse wheel when the list is longer than the window.
 - The top line is the verdict: **Starting zone**, **Stay in X**, **Time to move: go to Y**, or **Go to Y**.
-- Below it are the best zones for you. Each has a bar and a number showing how many levels' worth of quest XP is still waiting there, and next to it the gold you'd get from turning in those same quests. Click a zone to see its quests.
-- The gold comes from the game itself, since the quest databases don't have quest rewards. The game only knows a quest's reward once it has loaded that quest, so ZoneGuide asks it for the ones on screen. Until they arrive the amount ends in **+**, meaning at least that much. Known rewards are remembered between sessions, and forgotten when the game is patched.
+- Below it are the best zones for you. Each has a bar and a number showing how many levels' worth of quest XP is still waiting there, and next to it the gold you'd get from turning in those same quests and selling their reward items. Click a zone to see its quests.
+- The gold is the money those quests pay plus what their reward items sell for at a vendor. When a quest gives you several items at once, they all count (times the stack). When you pick one of several items, only the one that sells for most counts. Hover a zone to see how much is quest gold and how much is from selling items, and hover a quest to see which items count.
+- The gold and the item prices come from the game itself, since the quest databases don't have quest rewards. The game only knows a quest's reward once it has loaded that quest and its items, so ZoneGuide asks it for the ones on screen. Until they arrive the amount ends in **+**, meaning at least that much. Known amounts are remembered between sessions, and forgotten when the game is patched.
 - **Sort: Level / Sort: XP** (top right) switches the quest order. Either way, your current quests come first (green), then ones you can pick up now, then ones you've out-levelled (marked **(low XP)**), then locked ones (grey, with the reason). Quests 10 or more levels below you give 10% XP and aren't listed.
 - A **star** on a locked quest means it's **worth unlocking**: it and the quests you still need before it add up to at least 3 normal quests' worth of XP at your level, at least one normal quest's worth per step, through no more than 10 earlier quests and at most one group quest. Hover it to see the total XP and what to do ("start the chain", "come back at level N", or "keep the item if it drops"). Section headers show how many starred quests they hold.
 - **Click any quest** (or any step of an expanded chain) to open the world map on its quest giver, marked with a pin. The pin disappears when you close the map. This doesn't work in combat.
@@ -46,6 +47,7 @@ Simulated 12 to 60 runs that follow the addon's advice (a human warrior and a ni
 | Starting-zone routes (1 to ~12, including Skyborne) | RestedXP's free Forever guides |
 | Quests, levels, prerequisites, quest givers | QuestieDB's Forever data, with all of its corrections applied (what QuestieDB itself ships to players) |
 | Quest XP | QuestieDB's Forever XP observed in game, falling back to its Classic XP table |
+| Quest gold, reward items and what they sell for | The game itself, once it has loaded the quest and its items |
 | Elite/dungeon tags, removed quests | Questie corrections |
 | Which zones get scored | `tools/zones_alliance.json` (ours), including the Forever zones Riverglades, Shen'dralas and Mount Hyjal |
 
@@ -63,7 +65,7 @@ python3 tools/test_addon.py ZoneGuide            # spot checks with a fake game 
 python3 tools/test_addon.py ZoneGuide sim        # simulated 12 -> 60 run
 python3 tools/test_addon.py ZoneGuide clicks     # map clicks and tooltips
 python3 tools/test_addon.py ZoneGuide classes    # class quest section for several race and class pairs
-python3 tools/test_addon.py ZoneGuide checks     # starting route by location, map pins, dungeon section, stay rule
+python3 tools/test_addon.py ZoneGuide checks     # starting route by location, map pins, dungeon section, stay rule, quest gold
 ```
 
 ## Licences and credit
