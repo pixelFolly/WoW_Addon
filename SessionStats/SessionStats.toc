@@ -1,0 +1,8 @@
+## Interface: 16001, 11508
+## Title: SessionStats
+## Notes: Shows time played, XP gained and gold earned since login, with a reset button.
+## Author: Tyler
+## Version: 0.1.0
+## SavedVariablesPerCharacter: SessionStatsDB
+
+SessionStats.lua
